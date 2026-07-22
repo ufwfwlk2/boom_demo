@@ -1,0 +1,1 @@
+window.__HEYKOOL_RUNTIME_CONFIG__ = window.__HEYKOOL_RUNTIME_CONFIG__ || {};
