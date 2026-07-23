@@ -1,9 +1,12 @@
 version: '3.8'
 
-# 先在宿主机执行 npm run build，再启动静态 nginx 容器：
-#   podman-compose -f podman.yml up -d --build
+# 先在宿主机执行 npm run build，再显式构建本地镜像并启动静态 nginx 容器：
+#   podman-compose -f podman.yml build frontend
+#   podman-compose -f podman.yml up -d
 services:
   frontend:
+    # 使用 localhost/ 前缀，避免 Podman 将未限定镜像名解析到 quay.io。
+    image: localhost/heycool_demo_frontend:latest
     build:
       context: .
       dockerfile: Dockerfile
