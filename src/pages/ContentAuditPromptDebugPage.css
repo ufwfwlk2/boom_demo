@@ -1,0 +1,543 @@
+body.prompt-lab-body {
+  background: #111315;
+}
+
+.prompt-lab-shell {
+  width: min(1540px, calc(100vw - 32px));
+  min-width: 0;
+  margin: 0 auto;
+  padding: 20px 0 32px;
+  color: var(--ink);
+}
+
+.prompt-lab-header {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 20px;
+  border-bottom: 1px solid var(--line);
+  padding: 4px 0 18px;
+}
+
+.prompt-lab-header h1 {
+  max-width: none;
+  font-size: 30px;
+  line-height: 1.15;
+  letter-spacing: 0;
+}
+
+.prompt-lab-back-link,
+.prompt-lab-shell button {
+  min-height: 36px;
+  border: 1px solid rgba(122, 184, 255, 0.34);
+  border-radius: 6px;
+  background: rgba(122, 184, 255, 0.08);
+  color: var(--ink);
+  padding: 0 12px;
+  font-weight: 800;
+  text-decoration: none;
+}
+
+.prompt-lab-back-link {
+  display: inline-grid;
+  place-items: center;
+  flex: 0 0 auto;
+}
+
+.prompt-lab-shell button:hover:not(:disabled),
+.prompt-lab-back-link:hover {
+  border-color: rgba(122, 184, 255, 0.72);
+  background: rgba(122, 184, 255, 0.14);
+}
+
+.prompt-lab-config {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(190px, 1fr));
+  gap: 12px;
+  align-items: end;
+  border-bottom: 1px solid var(--line);
+  padding: 16px 0;
+}
+
+.prompt-lab-config label,
+.prompt-lab-prompt-section label {
+  letter-spacing: 0;
+}
+
+.prompt-lab-config input,
+.prompt-lab-prompt-section textarea {
+  border-radius: 6px;
+}
+
+.prompt-lab-token-field {
+  grid-column: span 2;
+}
+
+.prompt-lab-inline-field {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+}
+
+.prompt-lab-dev-toggle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 42px;
+}
+
+.prompt-lab-dev-toggle input {
+  width: 16px;
+  min-height: 16px;
+}
+
+.prompt-lab-error {
+  margin-top: 12px;
+  border-left: 3px solid var(--red);
+  border-radius: 4px;
+  background: rgba(255, 107, 107, 0.08);
+  color: #ffd1d1;
+  padding: 11px 13px;
+  overflow-wrap: anywhere;
+  font-size: 13px;
+}
+
+.prompt-lab-workspace {
+  display: grid;
+  grid-template-columns: minmax(230px, 0.62fr) minmax(420px, 1.4fr) minmax(330px, 0.9fr);
+  min-width: 0;
+  margin-top: 16px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: rgba(27, 30, 32, 0.92);
+}
+
+.prompt-lab-task-column,
+.prompt-lab-editor,
+.prompt-lab-result-column {
+  min-width: 0;
+  padding: 16px;
+}
+
+.prompt-lab-task-column,
+.prompt-lab-editor {
+  border-right: 1px solid var(--line);
+}
+
+.prompt-lab-editor {
+  display: grid;
+  align-content: start;
+  gap: 20px;
+}
+
+.prompt-lab-section-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.prompt-lab-section-head > div {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+
+.prompt-lab-section-head span {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.prompt-lab-section-head strong {
+  color: var(--blue);
+  font-size: 18px;
+}
+
+.prompt-lab-task-list,
+.prompt-lab-preview-tabs,
+.prompt-lab-segment-list,
+.prompt-lab-result-list {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+}
+
+.prompt-lab-task-list {
+  max-height: 680px;
+  overflow-y: auto;
+}
+
+.prompt-lab-task-list > button,
+.prompt-lab-preview-tabs > button {
+  display: grid;
+  gap: 5px;
+  width: 100%;
+  min-width: 0;
+  min-height: 0;
+  border-color: rgba(248, 242, 232, 0.12);
+  background: rgba(255, 255, 255, 0.025);
+  padding: 10px;
+  text-align: left;
+}
+
+.prompt-lab-task-list > button.is-active,
+.prompt-lab-preview-tabs > button.is-active {
+  border-color: rgba(255, 180, 92, 0.7);
+  background: rgba(255, 180, 92, 0.09);
+}
+
+.prompt-lab-task-list span,
+.prompt-lab-preview-tabs span {
+  color: var(--amber);
+  font-size: 11px;
+}
+
+.prompt-lab-task-list strong,
+.prompt-lab-preview-tabs strong,
+.prompt-lab-task-list small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.prompt-lab-task-list small,
+.prompt-lab-preview-tabs small {
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.prompt-lab-preview-tabs {
+  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+}
+
+.prompt-lab-segment-list {
+  max-height: 380px;
+  overflow-y: auto;
+}
+
+.prompt-lab-segment-warning {
+  margin: 0 0 10px;
+  border-left: 3px solid var(--amber);
+  background: rgba(255, 180, 92, 0.07);
+  color: var(--text);
+  padding: 9px 10px;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.prompt-lab-segment-card {
+  display: grid;
+  gap: 8px;
+  border: 1px solid rgba(248, 242, 232, 0.12);
+  border-radius: 6px;
+  background: rgba(0, 0, 0, 0.16);
+  padding: 10px;
+}
+
+.prompt-lab-segment-card.is-selected {
+  border-color: rgba(111, 225, 160, 0.58);
+  background: rgba(111, 225, 160, 0.07);
+}
+
+.prompt-lab-segment-card.has-error {
+  border-color: rgba(255, 107, 107, 0.64);
+  background: rgba(255, 107, 107, 0.06);
+}
+
+.prompt-lab-segment-head,
+.prompt-lab-segment-head label,
+.prompt-lab-segment-footer {
+  display: flex;
+  align-items: center;
+}
+
+.prompt-lab-segment-head,
+.prompt-lab-segment-footer {
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.prompt-lab-segment-head label {
+  grid-template-columns: none;
+  gap: 8px;
+  cursor: pointer;
+}
+
+.prompt-lab-segment-head button {
+  min-height: 30px;
+  padding: 0 9px;
+  font-size: 11px;
+}
+
+.prompt-lab-segment-card input {
+  width: 16px;
+  min-height: 16px;
+  margin: 0;
+}
+
+.prompt-lab-segment-card span {
+  color: var(--green);
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.prompt-lab-segment-card textarea {
+  min-height: 92px;
+  border-radius: 6px;
+  font-size: 13px;
+}
+
+.prompt-lab-segment-footer small {
+  color: var(--muted);
+  font-size: 10px;
+}
+
+.prompt-lab-segment-footer p {
+  color: var(--red);
+  font-size: 13px;
+  text-align: right;
+}
+
+.prompt-lab-prompt-section textarea {
+  min-height: 220px;
+  font-family: "SF Mono", "Cascadia Code", monospace;
+  font-size: 13px;
+}
+
+.prompt-lab-prompt-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 8px;
+}
+
+.prompt-lab-prompt-head button {
+  min-height: 32px;
+  padding: 0 10px;
+  font-size: 11px;
+}
+
+.prompt-lab-submit-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 8px;
+}
+
+.prompt-lab-submit-row > span {
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.prompt-lab-shell .prompt-lab-submit {
+  min-width: 112px;
+  border-color: rgba(111, 225, 160, 0.56);
+  background: #77dfa3;
+  color: #102218;
+}
+
+.prompt-lab-results {
+  display: grid;
+  gap: 14px;
+}
+
+.prompt-lab-result-meta {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 1px;
+  margin: 0;
+  background: rgba(248, 242, 232, 0.1);
+}
+
+.prompt-lab-result-meta div {
+  min-width: 0;
+  background: #1b1e20;
+  padding: 9px;
+}
+
+.prompt-lab-result-meta dt {
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 800;
+}
+
+.prompt-lab-result-meta dd {
+  margin: 4px 0 0;
+  overflow-wrap: anywhere;
+  color: var(--ink);
+  font-size: 12px;
+}
+
+.prompt-lab-warnings {
+  border-left: 3px solid var(--amber);
+  background: rgba(255, 180, 92, 0.07);
+  padding: 10px;
+}
+
+.prompt-lab-warnings p {
+  margin-top: 5px;
+  overflow-wrap: anywhere;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.prompt-lab-result-list article {
+  border: 1px solid rgba(248, 242, 232, 0.12);
+  border-left-width: 3px;
+  border-radius: 6px;
+  padding: 10px;
+}
+
+.prompt-lab-result-list article.is-passed {
+  border-left-color: var(--green);
+}
+
+.prompt-lab-result-list article.is-rejected {
+  border-left-color: var(--red);
+}
+
+.prompt-lab-result-list header {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.prompt-lab-result-list header span {
+  color: var(--green);
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.prompt-lab-result-list .is-rejected header span,
+.prompt-lab-result-list small {
+  color: var(--red);
+}
+
+.prompt-lab-result-list p,
+.prompt-lab-result-list small {
+  display: block;
+  margin-top: 8px;
+  overflow-wrap: anywhere;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.prompt-lab-raw-text {
+  min-width: 0;
+  border-top: 1px solid var(--line);
+  padding-top: 10px;
+}
+
+.prompt-lab-raw-text summary {
+  color: var(--blue);
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.prompt-lab-raw-text pre {
+  max-height: 260px;
+  overflow: auto;
+  margin: 10px 0 0;
+  border-radius: 6px;
+  background: #0b0d0e;
+  padding: 10px;
+  color: rgba(248, 242, 232, 0.8);
+  font-size: 11px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.prompt-lab-empty {
+  min-height: 76px;
+  display: grid;
+  place-items: center;
+  border: 1px dashed rgba(248, 242, 232, 0.16);
+  border-radius: 6px;
+  color: var(--muted);
+  padding: 12px;
+  text-align: center;
+  font-size: 12px;
+}
+
+@media (max-width: 1180px) {
+  .prompt-lab-config {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .prompt-lab-workspace {
+    grid-template-columns: minmax(220px, 0.55fr) minmax(0, 1.45fr);
+  }
+
+  .prompt-lab-editor {
+    border-right: 0;
+  }
+
+  .prompt-lab-result-column {
+    grid-column: 1 / -1;
+    border-top: 1px solid var(--line);
+  }
+}
+
+@media (max-width: 720px) {
+  .prompt-lab-shell {
+    width: calc(100vw - 20px);
+    padding-top: 10px;
+  }
+
+  .prompt-lab-header {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .prompt-lab-header h1 {
+    font-size: 24px;
+  }
+
+  .prompt-lab-config,
+  .prompt-lab-workspace {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .prompt-lab-token-field {
+    grid-column: auto;
+  }
+
+  .prompt-lab-task-column,
+  .prompt-lab-editor {
+    border-right: 0;
+    border-bottom: 1px solid var(--line);
+  }
+
+  .prompt-lab-result-column {
+    grid-column: auto;
+    border-top: 0;
+  }
+
+  .prompt-lab-task-list {
+    max-height: 260px;
+  }
+
+  .prompt-lab-preview-tabs {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .prompt-lab-submit-row {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .prompt-lab-prompt-head {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .prompt-lab-submit-row .prompt-lab-submit {
+    width: 100%;
+  }
+}

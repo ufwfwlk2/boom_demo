@@ -1,6 +1,16 @@
 import { startTransition, useDeferredValue, useEffect, useRef, useState } from 'react'
 import type { ChangeEvent, FormEvent } from 'react'
-import { boomclipApi } from './api'
+import {
+  boomclipApi,
+  defaultLoginPhone,
+  deriveAuthBaseUrl,
+  loadWorkbenchConfig,
+  localApiBaseUrl,
+  localAuthBaseUrl,
+  persistWorkbenchConfig,
+  remoteApiBaseUrl,
+  remoteAuthBaseUrl,
+} from './api'
 import type {
   AiVideoProvider,
   AiVideoPromptFailure,
@@ -21,47 +31,8 @@ import type {
 } from './types'
 import './App.css'
 
-type RuntimeConfig = Partial<{
-  VITE_BOOMCLIP_API_BASE_URL: string
-  VITE_BOOMCLIP_AUTH_BASE_URL: string
-  VITE_BOOMCLIP_LOGIN_PHONE: string
-  VITE_PREVIEW_DEV_MODE: string
-}>
-
-declare global {
-  interface Window {
-    __HEYKOOL_RUNTIME_CONFIG__?: RuntimeConfig
-  }
-}
-
-const CONFIG_KEY = 'boomclip.hotScriptBatch.config'
 const TERMINAL_PREVIEW_STATES: PreviewTaskStatus[] = ['completed', 'partial_failed', 'failed']
 const TERMINAL_VIDEO_STATES: VideoTaskStatus[] = ['completed', 'partial_failed', 'failed']
-const remoteApiBaseUrl = 'http://boomclip.heykoolai.com:8513'
-const remoteAuthBaseUrl = 'http://boomclip.heykoolai.com:8512'
-const localApiBaseUrl = 'http://localhost:8001'
-const localAuthBaseUrl = 'http://localhost:8200'
-const runtimeConfig: RuntimeConfig = typeof window === 'undefined' ? {} : (window.__HEYKOOL_RUNTIME_CONFIG__ ?? {})
-const defaultApiBaseUrl =
-  runtimeConfig.VITE_BOOMCLIP_API_BASE_URL ?? import.meta.env.VITE_BOOMCLIP_API_BASE_URL ?? remoteApiBaseUrl
-const defaultAuthBaseUrl =
-  runtimeConfig.VITE_BOOMCLIP_AUTH_BASE_URL ??
-  import.meta.env.VITE_BOOMCLIP_AUTH_BASE_URL ??
-  deriveAuthBaseUrl(defaultApiBaseUrl)
-const defaultLoginPhone =
-  runtimeConfig.VITE_BOOMCLIP_LOGIN_PHONE ?? import.meta.env.VITE_BOOMCLIP_LOGIN_PHONE ?? '13800138000'
-const defaultPreviewDevMode = (runtimeConfig.VITE_PREVIEW_DEV_MODE ?? import.meta.env.VITE_PREVIEW_DEV_MODE) === 'true'
-const previousDefaultApiBaseUrl = 'http://localhost:8001'
-const previousDefaultAuthBaseUrl = 'http://localhost:8200'
-
-function deriveAuthBaseUrl(apiBaseUrl: string) {
-  if (apiBaseUrl.includes('localhost:8001')) return apiBaseUrl.replace('localhost:8001', localAuthBaseUrl.replace('http://', ''))
-  if (apiBaseUrl.includes('127.0.0.1:8001')) return apiBaseUrl.replace('127.0.0.1:8001', '127.0.0.1:8200')
-  if (apiBaseUrl.includes('boomclip.heykoolai.com:8513')) {
-    return apiBaseUrl.replace('boomclip.heykoolai.com:8513', remoteAuthBaseUrl.replace('http://', ''))
-  }
-  return apiBaseUrl
-}
 
 type PreviewJob = {
   localId: string
@@ -80,30 +51,6 @@ type PreviewJob = {
   apiBaseUrl: string
   createdAt: string
   events: TimelineEvent[]
-}
-
-const defaultConfig: WorkbenchConfig = {
-  apiBaseUrl: defaultApiBaseUrl,
-  authBaseUrl: defaultAuthBaseUrl,
-  token: '',
-  devPreviewFields: defaultPreviewDevMode,
-}
-
-function loadConfig(): WorkbenchConfig {
-  const raw = localStorage.getItem(CONFIG_KEY)
-  if (!raw) return defaultConfig
-  try {
-    const stored = { ...defaultConfig, ...JSON.parse(raw) } as WorkbenchConfig
-    if (stored.apiBaseUrl === previousDefaultApiBaseUrl) {
-      stored.apiBaseUrl = defaultConfig.apiBaseUrl
-    }
-    if (stored.authBaseUrl === previousDefaultAuthBaseUrl) {
-      stored.authBaseUrl = defaultConfig.authBaseUrl
-    }
-    return stored
-  } catch {
-    return defaultConfig
-  }
 }
 
 function eventId() {
@@ -311,7 +258,7 @@ function formatConfidence(value?: number) {
 }
 
 function App() {
-  const [config, setConfig] = useState<WorkbenchConfig>(loadConfig)
+  const [config, setConfig] = useState<WorkbenchConfig>(loadWorkbenchConfig)
   const [projects, setProjects] = useState<Project[]>([])
   const [templates, setTemplates] = useState<Template[]>([])
   const [providers, setProviders] = useState<AiVideoProvider[]>([])
@@ -393,7 +340,7 @@ function App() {
     submittingVideoJobId !== activeJob?.localId
 
   useEffect(() => {
-    localStorage.setItem(CONFIG_KEY, JSON.stringify(config))
+    persistWorkbenchConfig(config)
   }, [config])
 
   useEffect(() => {

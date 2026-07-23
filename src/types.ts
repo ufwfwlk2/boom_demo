@@ -342,8 +342,51 @@ export type HotScriptVideoListResponse = {
 export type WorkbenchConfig = {
   apiBaseUrl: string
   authBaseUrl: string
+  promptLabApiBaseUrl: string
   token: string
   devPreviewFields: boolean
+}
+
+export type ModerationProbeRequest = {
+  previewId: string
+  finalSegmentIndexes: number[]
+  promptOverride: string
+  storyboardOverrides: StoryboardOverride[]
+}
+
+export type StoryboardOverride = {
+  finalSegmentIndex: number
+  inputText: string
+}
+
+export type ModerationProbeResult = {
+  finalSegmentIndex: number
+  inputText: string
+  passed: boolean
+  reason: string
+}
+
+export type ModerationProbeTokenUsage = {
+  inputTokens: number
+  outputTokens: number
+  totalTokens: number
+  source: string
+}
+
+export type ModerationProbeResponse = {
+  requestId: string
+  previewId: string
+  provider: string
+  model: string
+  results: ModerationProbeResult[]
+  warnings: string[]
+  tokenUsage: ModerationProbeTokenUsage
+  latencyMs: number
+  rawText: string
+}
+
+export type ModerationProbeErrorData = {
+  errorCode: string
 }
 
 export type TimelineEvent = {
