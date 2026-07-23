@@ -23,6 +23,7 @@ const browser = await chromium.launch({
 
 const configKey = 'boomclip.hotScriptBatch.config'
 const syntheticToken = 'synthetic-browser-smoke-token'
+const authorizedPromptMarker = 'SYNTHETIC_AUTHORIZED_PROMPT_V1_DO_NOT_SHIP'
 const initialConfig = {
   apiBaseUrl: 'http://127.0.0.1:4174',
   authBaseUrl: 'http://127.0.0.1:4176',
@@ -156,10 +157,12 @@ function probeSuccessFor(body) {
 
 let taskMode = 'success'
 let probeMode = 'success'
+let promptMode = 'success'
 let optionsCount = 0
 let rejectedCorsRequests = 0
 const previewUrls = []
 const probeRequests = []
+const promptRequests = []
 
 function writeJson(response, status, payload) {
   response.writeHead(status, corsHeaders)
@@ -212,6 +215,42 @@ const labServer = createServer(async (request, response) => {
     optionsCount += 1
     response.writeHead(204, corsHeaders)
     response.end()
+    return
+  }
+  if (request.method === 'GET' && request.url === '/api/v1/content-moderation/prompt') {
+    const currentMode = promptMode
+    promptRequests.push({
+      authorization: request.headers.authorization,
+      mode: currentMode,
+    })
+    if (currentMode === 'delayed-forbidden') {
+      await new Promise((resolve) => setTimeout(resolve, 500))
+      writeJson(response, 403, {
+        code: 403,
+        status: 'error',
+        data: { errorCode: 'moderation_probe_forbidden' },
+        message: ['Forbidden'],
+      })
+      return
+    }
+    if (currentMode === 'forbidden') {
+      writeJson(response, 403, {
+        code: 403,
+        status: 'error',
+        data: { errorCode: 'moderation_probe_forbidden' },
+        message: ['Forbidden'],
+      })
+      return
+    }
+    writeJson(response, 200, {
+      code: 200,
+      status: 'success',
+      data: {
+        prompt: authorizedPromptMarker,
+        version: 'v1',
+      },
+      message: [],
+    })
     return
   }
   if (request.method !== 'POST' || request.url !== '/api/v1/content-moderation/probe') {
@@ -282,6 +321,9 @@ try {
   const rootResponse = await page.goto(`${appUrl}/`, { waitUntil: 'networkidle' })
   assert.equal(rootResponse?.status(), 200, 'root route must return 200')
   await page.getByRole('heading', { name: '内容审核 Prompt 调试台' }).waitFor()
+  await page.getByText('授权 Prompt 未加载').waitFor()
+  assert.equal(await page.getByLabel('授权完整 Prompt').count(), 0, 'Prompt must not render before authorization')
+  assert.equal(await page.getByLabel('登录密码').inputValue(), '', 'Prompt Lab password must start empty')
   await page.reload({ waitUntil: 'networkidle' })
   await page.getByRole('heading', { name: '内容审核 Prompt 调试台' }).waitFor()
   await page.screenshot({ path: path.join(artifactDir, 'STEP3_ROOT_DESKTOP.png'), fullPage: true })
@@ -294,6 +336,7 @@ try {
   assert.equal(operationsResponse?.status(), 200, 'Preview operations route must return 200')
   await page.reload({ waitUntil: 'networkidle' })
   await page.getByRole('heading', { name: 'Heykool运营测试台' }).waitFor()
+  assert.equal(await page.getByLabel('登录密码').inputValue(), '', 'operations password must start empty')
 
   const aliasResponse = await page.goto(`${appUrl}/content-audit-prompt-debug`, { waitUntil: 'networkidle' })
   assert.equal(aliasResponse?.status(), 200, 'Prompt Lab compatibility alias must return 200')
@@ -308,23 +351,54 @@ try {
     }))
   }, configKey)
   await page.reload({ waitUntil: 'networkidle' })
-  assert.equal(await page.getByLabel('Prompt Lab API Base URL').inputValue(), 'http://localhost:8521')
+  assert.equal(await page.getByLabel('Prompt Lab API Base URL').inputValue(), 'http://boomclip.heykoolai.com:5064')
   await page.waitForFunction((key) => {
     const stored = JSON.parse(localStorage.getItem(key) ?? '{}')
-    return stored.promptLabApiBaseUrl === 'http://localhost:8521'
+    return stored.promptLabApiBaseUrl === 'http://boomclip.heykoolai.com:5064'
   }, configKey)
   assert.equal(probeRequests.length, 0, 'invalid legacy config must not send a probe')
 
   await page.getByRole('button', { name: '刷新' }).click()
   await page.getByRole('alert').filter({ hasText: '请先填写 Bearer Token' }).waitFor()
 
+  await page.getByLabel('Prompt Lab API Base URL').fill('http://127.0.0.1:4175')
   await page.getByLabel('Bearer Token').fill(syntheticToken)
   await page.waitForFunction(({ key, token }) => JSON.parse(localStorage.getItem(key) ?? '{}').token === token, {
     key: configKey,
     token: syntheticToken,
   })
+
+  promptMode = 'delayed-forbidden'
+  await page.getByRole('button', { name: '加载授权 Prompt' }).click()
+  await page.getByRole('button', { name: '加载中...' }).waitFor()
+  await page.getByLabel('Bearer Token').fill(`${syntheticToken}-replacement`)
+  promptMode = 'success'
+  await page.getByRole('button', { name: '加载授权 Prompt' }).click()
+  const authorizedPrompt = page.getByLabel('授权完整 Prompt')
+  await authorizedPrompt.waitFor()
+  assert.equal(await authorizedPrompt.inputValue(), authorizedPromptMarker)
+  await page.waitForTimeout(600)
+  assert.equal(await authorizedPrompt.inputValue(), authorizedPromptMarker, 'stale 403 must not hide the new Prompt')
+
+  promptMode = 'forbidden'
+  await page.getByRole('button', { name: '重新加载授权 Prompt' }).click()
+  await page.getByRole('alert').filter({ hasText: '当前账号未加入 Prompt Lab 授权' }).waitFor()
+  assert.equal(await page.getByLabel('授权完整 Prompt').count(), 0, '403 must keep Prompt hidden')
+
+  promptMode = 'success'
+  await page.getByRole('button', { name: '加载授权 Prompt' }).click()
+  await page.getByLabel('授权完整 Prompt').waitFor()
+  await page.getByLabel('Bearer Token').fill(syntheticToken)
+  assert.equal(await page.getByLabel('授权完整 Prompt').count(), 0, 'token changes must clear Prompt')
+  await page.getByRole('button', { name: '加载授权 Prompt' }).click()
+  await page.getByLabel('授权完整 Prompt').waitFor()
+  await page.getByLabel('Prompt Lab API Base URL').fill('http://127.0.0.1:4175/')
+  assert.equal(await page.getByLabel('授权完整 Prompt').count(), 0, 'Prompt Lab URL changes must clear Prompt')
+  await page.getByRole('button', { name: '加载授权 Prompt' }).click()
+  await page.getByLabel('授权完整 Prompt').waitFor()
+
   const storedConfig = await page.evaluate((key) => JSON.parse(localStorage.getItem(key) ?? '{}'), configKey)
-  assert.equal(storedConfig.promptLabApiBaseUrl, 'http://localhost:8521')
+  assert.equal(storedConfig.promptLabApiBaseUrl, 'http://127.0.0.1:4175')
   assert.equal(storedConfig.devPreviewFields, false)
   assert(!('promptOverride' in storedConfig), 'candidate prompt must not be persisted')
   taskMode = 'forbidden'
@@ -346,11 +420,9 @@ try {
   await page.getByText('检测到 1 条旧版异常分镜索引，已跳过；请重新生成 Preview 后测试。').waitFor()
   assert.equal(await page.getByLabel('分镜 #3.5 画面描述').count(), 0, 'fractional segment must not be editable')
   assert.equal(await page.getByText('异常索引正文不得展示').count(), 0, 'invalid segment text must not render')
-  const candidatePrompt = page.getByLabel('候选完整 Prompt')
+  const candidatePrompt = page.getByLabel('授权完整 Prompt')
   const baselinePrompt = await candidatePrompt.inputValue()
-  assert(baselinePrompt.startsWith('你是一个专业的内容安全与形态审核助手。'))
-  assert(baselinePrompt.includes('【强制输出约束】'))
-  assert(baselinePrompt.includes('只输出最终 JSON，不要输出任何解释文字。'))
+  assert.equal(baselinePrompt, authorizedPromptMarker)
 
   await candidatePrompt.fill('')
   await page.getByRole('button', { name: '执行审核' }).click()
@@ -404,6 +476,8 @@ try {
 
   await page.getByRole('checkbox', { name: '#4' }).uncheck()
   await page.getByLabel('Prompt Lab API Base URL').fill('http://127.0.0.1:4175/')
+  await page.getByRole('button', { name: '加载授权 Prompt' }).click()
+  await candidatePrompt.waitFor()
 
   await storyboardSeven.fill('   ')
   await page.getByRole('button', { name: '执行审核' }).click()
@@ -462,22 +536,25 @@ try {
   ]
   for (const invalidOrigin of invalidPromptLabOrigins) {
     const requestCount = probeRequests.length
+    const promptRequestCount = promptRequests.length
     await page.getByLabel('Prompt Lab API Base URL').fill(invalidOrigin)
-    await page.getByRole('button', { name: '执行审核' }).click()
+    await page.getByRole('button', { name: '加载授权 Prompt' }).click()
     await page.getByRole('alert').filter({ hasText: '必须是仅包含协议、主机和端口的 origin' }).waitFor()
     await page.waitForTimeout(50)
     const persisted = await page.evaluate((key) => JSON.parse(localStorage.getItem(key) ?? '{}'), configKey)
     assert.equal(persisted.promptLabApiBaseUrl, 'http://127.0.0.1:4175')
+    assert.equal(promptRequests.length, promptRequestCount, `${invalidOrigin} must not request a Prompt`)
     assert.equal(probeRequests.length, requestCount, `${invalidOrigin} must not send a probe`)
   }
 
   probeMode = 'failure'
   const retainedPrompt = '失败后必须保留的合成候选 Prompt'
   await page.getByLabel('Prompt Lab API Base URL').fill('http://127.0.0.1:4175')
-  await page.getByLabel('候选完整 Prompt').fill(retainedPrompt)
+  await page.getByRole('button', { name: '加载授权 Prompt' }).click()
+  await page.getByLabel('授权完整 Prompt').fill(retainedPrompt)
   await page.getByRole('button', { name: '执行审核' }).click()
   await page.getByRole('alert').filter({ hasText: '审核依赖暂时不可用' }).waitFor()
-  assert.equal(await page.getByLabel('候选完整 Prompt').inputValue(), retainedPrompt)
+  assert.equal(await page.getByLabel('授权完整 Prompt').inputValue(), retainedPrompt)
   assert.equal(await storyboardSeven.inputValue(), overrideSeven)
   assert.equal(await storyboardTwo.inputValue(), overrideTwo)
   assert.equal(await page.locator('.prompt-lab-segment-list input:checked').count(), 2, 'failure must retain selection')

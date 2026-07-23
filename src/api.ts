@@ -10,6 +10,8 @@ import type {
   HotScriptVideoListQuery,
   HotScriptVideoListResponse,
   LoginResponse,
+  ModerationPromptResponse,
+  ModerationProbeErrorData,
   ModerationProbeRequest,
   ModerationProbeResponse,
   PasswordLoginRequest,
@@ -64,7 +66,7 @@ export const remoteApiBaseUrl = 'http://boomclip.heykoolai.com:8513'
 export const remoteAuthBaseUrl = 'http://boomclip.heykoolai.com:8512'
 export const localApiBaseUrl = 'http://localhost:8001'
 export const localAuthBaseUrl = 'http://localhost:8200'
-export const defaultPromptLabApiBaseUrl = 'http://localhost:8521'
+export const defaultPromptLabApiBaseUrl = 'http://boomclip.heykoolai.com:5064'
 
 const runtimeConfig: RuntimeConfig = typeof window === 'undefined' ? {} : (window.__HEYKOOL_RUNTIME_CONFIG__ ?? {})
 const defaultApiBaseUrl =
@@ -76,6 +78,7 @@ const defaultAuthBaseUrl =
 const defaultPreviewDevMode = (runtimeConfig.VITE_PREVIEW_DEV_MODE ?? import.meta.env.VITE_PREVIEW_DEV_MODE) === 'true'
 const previousDefaultApiBaseUrl = 'http://localhost:8001'
 const previousDefaultAuthBaseUrl = 'http://localhost:8200'
+const previousDefaultPromptLabApiBaseUrl = 'http://localhost:8521'
 
 export const defaultLoginPhone =
   runtimeConfig.VITE_BOOMCLIP_LOGIN_PHONE ?? import.meta.env.VITE_BOOMCLIP_LOGIN_PHONE ?? '13800138000'
@@ -104,6 +107,9 @@ export function loadWorkbenchConfig(): WorkbenchConfig {
     const stored = { ...defaultWorkbenchConfig, ...JSON.parse(raw) } as WorkbenchConfig
     if (stored.apiBaseUrl === previousDefaultApiBaseUrl) stored.apiBaseUrl = defaultWorkbenchConfig.apiBaseUrl
     if (stored.authBaseUrl === previousDefaultAuthBaseUrl) stored.authBaseUrl = defaultWorkbenchConfig.authBaseUrl
+    if (stored.promptLabApiBaseUrl === previousDefaultPromptLabApiBaseUrl) {
+      stored.promptLabApiBaseUrl = defaultWorkbenchConfig.promptLabApiBaseUrl
+    }
     try {
       stored.promptLabApiBaseUrl = serviceOrigin(stored.promptLabApiBaseUrl)
     } catch {
@@ -250,10 +256,11 @@ async function streamSse<T>(
 }
 
 export const boomclipApi = {
-  loginWithPassword(config: WorkbenchConfig, body: PasswordLoginRequest) {
+  loginWithPassword(config: WorkbenchConfig, body: PasswordLoginRequest, signal?: AbortSignal) {
     return authRequest<LoginResponse>(config, '/api/v1/auth/login', {
       method: 'POST',
       body: JSON.stringify(body),
+      signal,
     })
   },
 
@@ -295,21 +302,22 @@ export const boomclipApi = {
     return request<PreviewTaskMessage>(config, `/api/v1/hot-scripts/preview-tasks/${taskId}`)
   },
 
-  getPreviewTasks(config: WorkbenchConfig, params: PreviewTaskListQuery = {}) {
+  getPreviewTasks(config: WorkbenchConfig, params: PreviewTaskListQuery = {}, signal?: AbortSignal) {
     const query = new URLSearchParams({
       page: String(params.page ?? 1),
       pageSize: String(params.pageSize ?? 20),
     })
     if (params.status) query.set('status', params.status)
     if (params.projectId) query.set('projectId', String(params.projectId))
-    return request<PreviewTaskListResponse>(config, `/api/v1/hot-scripts/preview-tasks?${query}`)
+    return request<PreviewTaskListResponse>(config, `/api/v1/hot-scripts/preview-tasks?${query}`, { signal })
   },
 
-  getPreviewTaskPreviews(config: WorkbenchConfig, taskId: string) {
+  getPreviewTaskPreviews(config: WorkbenchConfig, taskId: string, signal?: AbortSignal) {
     const suffix = config.devPreviewFields ? '?dev=1' : ''
     return request<PreviewDetail[]>(
       config,
       `/api/v1/hot-scripts/preview-tasks/${taskId}/previews${suffix}`,
+      { signal },
     )
   },
 
@@ -363,7 +371,34 @@ export const boomclipApi = {
     return streamSse(config, `/api/v1/hot-scripts/video-tasks/${taskId}/stream`, handlers)
   },
 
-  async probeContentModeration(config: WorkbenchConfig, body: ModerationProbeRequest) {
+  async getContentModerationPrompt(config: WorkbenchConfig, signal?: AbortSignal) {
+    const response = await fetch(`${serviceOrigin(config.promptLabApiBaseUrl)}/api/v1/content-moderation/prompt`, {
+      method: 'GET',
+      headers: {
+        Authorization: `Bearer ${config.token}`,
+      },
+      cache: 'no-store',
+      signal,
+    })
+    const payload = (await response.json().catch(() => null)) as
+      | ApiEnvelope<ModerationPromptResponse | ModerationProbeErrorData>
+      | null
+    const code = Number(payload?.code ?? response.status)
+    const data = payload?.data
+    const validPrompt = data
+      && 'prompt' in data
+      && typeof data.prompt === 'string'
+      && data.prompt.trim().length > 0
+      && data.version === 'v1'
+    if (!response.ok || code !== 200 || payload?.status !== 'success' || !validPrompt) {
+      const error = new Error('授权 Prompt 请求失败')
+      ;(error as Error & { payload?: typeof payload }).payload = payload
+      throw error
+    }
+    return data
+  },
+
+  async probeContentModeration(config: WorkbenchConfig, body: ModerationProbeRequest, signal?: AbortSignal) {
     const response = await fetch(`${serviceOrigin(config.promptLabApiBaseUrl)}/api/v1/content-moderation/probe`, {
       method: 'POST',
       headers: {
@@ -371,6 +406,7 @@ export const boomclipApi = {
         Authorization: `Bearer ${config.token}`,
       },
       body: JSON.stringify(body),
+      signal,
     })
     const payload = (await response.json().catch(() => null)) as ApiEnvelope<ModerationProbeResponse> | null
     const code = Number(payload?.code ?? response.status)

@@ -2,12 +2,12 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import type { FormEvent } from 'react'
 import {
   boomclipApi,
+  defaultLoginPhone,
   deriveAuthBaseUrl,
   loadWorkbenchConfig,
   persistWorkbenchConfig,
   serviceOrigin,
 } from '../api'
-import { CONTENT_MODERATION_BASELINE_PROMPT } from '../contentModerationBaselinePrompt'
 import type {
   ModerationProbeErrorData,
   ModerationProbeResponse,
@@ -22,6 +22,11 @@ import './ContentAuditPromptDebugPage.css'
 type AuditableSegment = PreviewFinalSegment & {
   finalSegmentIndex: number
   aiVideoPrompt: string
+}
+
+type AuthorizationRequestContext = {
+  generation: number
+  controller: AbortController
 }
 
 const ERROR_MESSAGES: Record<string, string> = {
@@ -98,9 +103,36 @@ function safeErrorMessage(error: unknown, fallback: string) {
   return fallback
 }
 
+function safeLoginErrorMessage(error: unknown) {
+  const { code } = apiErrorCode(error)
+  if (code === 401) return '手机号或密码错误，登录凭据无效。'
+  if (code === 403) return '当前账号无权限或不可用。'
+  if (error instanceof TypeError) return 'Auth 服务不可达，请检查 Auth 地址和服务状态。'
+  return '登录失败，请稍后重试。'
+}
+
+function safePromptLoadErrorMessage(error: unknown) {
+  const { code, errorCode } = apiErrorCode(error)
+  if (code === 401 || errorCode === 'moderation_probe_unauthorized') {
+    return '身份凭据无效，请重新登录或更新 Bearer Token。'
+  }
+  if (code === 403 || errorCode === 'moderation_probe_forbidden') {
+    return '当前账号未加入 Prompt Lab 授权。'
+  }
+  if (code === 503 || errorCode === 'moderation_probe_upstream_unavailable' || error instanceof TypeError) {
+    return 'Prompt Lab 服务暂时不可用，请稍后重试。'
+  }
+  return '授权 Prompt 加载失败，请稍后重试。'
+}
+
 function ContentAuditPromptDebugPage() {
   const [config, setConfig] = useState<WorkbenchConfig>(loadWorkbenchConfig)
   const [promptLabApiBaseUrlDraft, setPromptLabApiBaseUrlDraft] = useState(config.promptLabApiBaseUrl)
+  const [loginPhone, setLoginPhone] = useState(defaultLoginPhone)
+  const [loginPassword, setLoginPassword] = useState('')
+  const [loggingIn, setLoggingIn] = useState(false)
+  const [loginFeedback, setLoginFeedback] = useState<{ kind: 'success' | 'error'; message: string } | null>(null)
+  const [loginUserId, setLoginUserId] = useState<number | null>(null)
   const [tasks, setTasks] = useState<PreviewTaskListItem[]>([])
   const [selectedTaskId, setSelectedTaskId] = useState('')
   const [previews, setPreviews] = useState<PreviewDetail[]>([])
@@ -108,13 +140,22 @@ function ContentAuditPromptDebugPage() {
   const [selectedIndexes, setSelectedIndexes] = useState<Set<number>>(new Set())
   const [storyboardDrafts, setStoryboardDrafts] = useState<Record<string, Record<number, string>>>({})
   const [storyboardErrors, setStoryboardErrors] = useState<Record<string, Record<number, string>>>({})
-  const [promptOverride, setPromptOverride] = useState(CONTENT_MODERATION_BASELINE_PROMPT)
+  const [authorizedPrompt, setAuthorizedPrompt] = useState<string | null>(null)
+  const [promptOverride, setPromptOverride] = useState('')
+  const [promptVersion, setPromptVersion] = useState<'v1' | null>(null)
+  const [promptLoadError, setPromptLoadError] = useState('')
+  const [loadingPrompt, setLoadingPrompt] = useState(false)
   const [result, setResult] = useState<ModerationProbeResponse | null>(null)
   const [error, setError] = useState('')
   const [loadingTasks, setLoadingTasks] = useState(false)
   const [loadingPreviews, setLoadingPreviews] = useState(false)
   const [probing, setProbing] = useState(false)
   const probeInFlight = useRef(false)
+  const authorizationContextRef = useRef<AuthorizationRequestContext>({
+    generation: 0,
+    controller: new AbortController(),
+  })
+  const promptLabApiBaseUrlDraftRef = useRef(config.promptLabApiBaseUrl)
 
   const selectedPreview = previews.find((preview) => preview.previewId === selectedPreviewId) ?? null
   const segments = useMemo(() => auditableSegments(selectedPreview), [selectedPreview])
@@ -134,8 +175,96 @@ function ContentAuditPromptDebugPage() {
     return () => document.body.classList.remove('prompt-lab-body')
   }, [])
 
+  useEffect(() => () => authorizationContextRef.current.controller.abort(), [])
+
   function updateConfig(partial: Partial<WorkbenchConfig>) {
     setConfig((current) => ({ ...current, ...partial }))
+  }
+
+  function clearAuthorizedPrompt() {
+    setAuthorizedPrompt(null)
+    setPromptOverride('')
+    setPromptVersion(null)
+    setPromptLoadError('')
+    setLoadingPrompt(false)
+  }
+
+  function isAuthorizationContextActive(context: AuthorizationRequestContext) {
+    return authorizationContextRef.current.generation === context.generation
+      && authorizationContextRef.current.controller === context.controller
+      && !context.controller.signal.aborted
+  }
+
+  function invalidateAuthorizationContext(clearAccountData: boolean) {
+    const previous = authorizationContextRef.current
+    previous.controller.abort()
+    const next = {
+      generation: previous.generation + 1,
+      controller: new AbortController(),
+    }
+    authorizationContextRef.current = next
+    clearAuthorizedPrompt()
+    probeInFlight.current = false
+    setProbing(false)
+    setLoadingTasks(false)
+    setLoadingPreviews(false)
+    setLoggingIn(false)
+    setResult(null)
+    setError('')
+    if (clearAccountData) {
+      setTasks([])
+      setPreviews([])
+      setSelectedTaskId('')
+      setSelectedPreviewId('')
+      setSelectedIndexes(new Set())
+      setStoryboardDrafts({})
+      setStoryboardErrors({})
+    }
+    return next
+  }
+
+  async function loadAuthorizedPrompt(
+    runConfig: WorkbenchConfig = config,
+    requestContext: AuthorizationRequestContext = authorizationContextRef.current,
+  ) {
+    clearAuthorizedPrompt()
+    if (!isAuthorizationContextActive(requestContext)) return
+    if (!runConfig.token.trim()) {
+      setPromptLoadError('请先登录或填写 Bearer Token。')
+      return
+    }
+
+    let promptLabApiBaseUrl: string
+    try {
+      promptLabApiBaseUrl = serviceOrigin(promptLabApiBaseUrlDraftRef.current)
+    } catch {
+      setPromptLoadError('Prompt Lab API 地址必须是仅包含协议、主机和端口的 origin。')
+      return
+    }
+
+    const requestConfig = { ...runConfig, promptLabApiBaseUrl }
+    promptLabApiBaseUrlDraftRef.current = promptLabApiBaseUrl
+    setPromptLabApiBaseUrlDraft(promptLabApiBaseUrl)
+    setConfig((current) => ({ ...current, promptLabApiBaseUrl }))
+    setLoadingPrompt(true)
+    try {
+      const response = await boomclipApi.getContentModerationPrompt(
+        requestConfig,
+        requestContext.controller.signal,
+      )
+      if (!isAuthorizationContextActive(requestContext)) return
+      setAuthorizedPrompt(response.prompt)
+      setPromptOverride(response.prompt)
+      setPromptVersion(response.version)
+    } catch (promptError) {
+      if (!isAuthorizationContextActive(requestContext)) return
+      setAuthorizedPrompt(null)
+      setPromptOverride('')
+      setPromptVersion(null)
+      setPromptLoadError(safePromptLoadErrorMessage(promptError))
+    } finally {
+      if (isAuthorizationContextActive(requestContext)) setLoadingPrompt(false)
+    }
   }
 
   function selectPreview(preview: PreviewDetail) {
@@ -147,13 +276,23 @@ function ContentAuditPromptDebugPage() {
     setError('')
   }
 
-  async function loadPreviews(taskId: string, runConfig: WorkbenchConfig = config) {
+  async function loadPreviews(
+    taskId: string,
+    runConfig: WorkbenchConfig = config,
+    requestContext: AuthorizationRequestContext = authorizationContextRef.current,
+  ) {
+    if (!isAuthorizationContextActive(requestContext)) return
     setSelectedTaskId(taskId)
     setLoadingPreviews(true)
     setError('')
     setResult(null)
     try {
-      const loaded = await boomclipApi.getPreviewTaskPreviews(runConfig, taskId)
+      const loaded = await boomclipApi.getPreviewTaskPreviews(
+        runConfig,
+        taskId,
+        requestContext.controller.signal,
+      )
+      if (!isAuthorizationContextActive(requestContext)) return
       setPreviews(loaded)
       const firstAuditable = loaded.find((preview) => auditableSegments(preview).length > 0) ?? loaded[0]
       if (firstAuditable) selectPreview(firstAuditable)
@@ -162,17 +301,22 @@ function ContentAuditPromptDebugPage() {
         setSelectedIndexes(new Set())
       }
     } catch (loadError) {
+      if (!isAuthorizationContextActive(requestContext)) return
       setPreviews([])
       setSelectedPreviewId('')
       setSelectedIndexes(new Set())
       setError(safeErrorMessage(loadError, 'Preview 组详情加载失败，请稍后重试。'))
     } finally {
-      setLoadingPreviews(false)
+      if (isAuthorizationContextActive(requestContext)) setLoadingPreviews(false)
     }
   }
 
-  async function loadTasks() {
-    if (!config.token.trim()) {
+  async function loadTasks(
+    runConfig: WorkbenchConfig = config,
+    requestContext: AuthorizationRequestContext = authorizationContextRef.current,
+  ) {
+    if (!isAuthorizationContextActive(requestContext)) return
+    if (!runConfig.token.trim()) {
       setTasks([])
       setPreviews([])
       setSelectedTaskId('')
@@ -184,16 +328,22 @@ function ContentAuditPromptDebugPage() {
     setLoadingTasks(true)
     setError('')
     try {
-      const response = await boomclipApi.getPreviewTasks(config, { page: 1, pageSize: 20 })
+      const response = await boomclipApi.getPreviewTasks(
+        runConfig,
+        { page: 1, pageSize: 20 },
+        requestContext.controller.signal,
+      )
+      if (!isAuthorizationContextActive(requestContext)) return
       const loaded = response.tasks ?? []
       setTasks(loaded)
       const nextTaskId = loaded.some((task) => task.taskId === selectedTaskId) ? selectedTaskId : (loaded[0]?.taskId ?? '')
-      if (nextTaskId) await loadPreviews(nextTaskId)
+      if (nextTaskId) await loadPreviews(nextTaskId, runConfig, requestContext)
       else {
         setPreviews([])
         setSelectedPreviewId('')
       }
     } catch (loadError) {
+      if (!isAuthorizationContextActive(requestContext)) return
       setTasks([])
       setPreviews([])
       setSelectedTaskId('')
@@ -201,7 +351,50 @@ function ContentAuditPromptDebugPage() {
       setSelectedIndexes(new Set())
       setError(safeErrorMessage(loadError, 'Preview 任务加载失败，请稍后重试。'))
     } finally {
-      setLoadingTasks(false)
+      if (isAuthorizationContextActive(requestContext)) setLoadingTasks(false)
+    }
+  }
+
+  async function loginWithPassword(event: FormEvent) {
+    event.preventDefault()
+    if (loggingIn) return
+    if (!loginPhone.trim() || !loginPassword) {
+      setLoginFeedback({ kind: 'error', message: '请填写手机号和密码。' })
+      return
+    }
+
+    const requestContext = invalidateAuthorizationContext(true)
+    setLoginUserId(null)
+    setLoggingIn(true)
+    setLoginFeedback(null)
+    setError('')
+    try {
+      const response = await boomclipApi.loginWithPassword(config, {
+        phone: loginPhone.trim(),
+        password: loginPassword,
+      }, requestContext.controller.signal)
+      if (!isAuthorizationContextActive(requestContext)) return
+      const authedConfig = { ...config, token: response.accessToken }
+      updateConfig({ token: response.accessToken })
+      setLoginPassword('')
+      setLoginUserId(response.user?.id ?? null)
+      setLoginFeedback({
+        kind: 'success',
+        message: `${response.user?.nickname ?? response.user?.phone ?? loginPhone.trim()} 登录成功`,
+      })
+      await Promise.all([
+        loadAuthorizedPrompt(authedConfig, requestContext),
+        loadTasks(authedConfig, requestContext),
+      ])
+    } catch (loginError) {
+      if (!isAuthorizationContextActive(requestContext)) return
+      setLoginUserId(null)
+      setLoginFeedback({
+        kind: 'error',
+        message: safeLoginErrorMessage(loginError),
+      })
+    } finally {
+      if (isAuthorizationContextActive(requestContext)) setLoggingIn(false)
     }
   }
 
@@ -239,6 +432,10 @@ function ContentAuditPromptDebugPage() {
     if (probeInFlight.current) return
     if (!config.token.trim()) {
       setError('请先填写 Bearer Token。')
+      return
+    }
+    if (!authorizedPrompt) {
+      setError('请先加载授权 Prompt。')
       return
     }
     if (!selectedPreview || selectedIndexes.size === 0) {
@@ -299,6 +496,8 @@ function ContentAuditPromptDebugPage() {
     setPromptLabApiBaseUrlDraft(promptLabApiBaseUrl)
     setConfig(validatedConfig)
 
+    const requestContext = authorizationContextRef.current
+    if (!isAuthorizationContextActive(requestContext)) return
     probeInFlight.current = true
     setProbing(true)
     setError('')
@@ -309,13 +508,26 @@ function ContentAuditPromptDebugPage() {
         finalSegmentIndexes,
         promptOverride: prompt,
         storyboardOverrides,
-      })
+      }, requestContext.controller.signal)
+      if (!isAuthorizationContextActive(requestContext)) return
       setResult(response)
     } catch (probeError) {
+      if (!isAuthorizationContextActive(requestContext)) return
+      const { code, errorCode } = apiErrorCode(probeError)
+      if (
+        code === 401
+        || code === 403
+        || errorCode === 'moderation_probe_unauthorized'
+        || errorCode === 'moderation_probe_forbidden'
+      ) {
+        invalidateAuthorizationContext(false)
+      }
       setError(safeErrorMessage(probeError, '审核请求失败，请稍后重试。'))
     } finally {
-      probeInFlight.current = false
-      setProbing(false)
+      if (isAuthorizationContextActive(requestContext)) {
+        probeInFlight.current = false
+        setProbing(false)
+      }
     }
   }
 
@@ -332,21 +544,40 @@ function ContentAuditPromptDebugPage() {
       <section className="prompt-lab-config" aria-label="连接配置">
         <label>
           Pic API Base URL
-          <input value={config.apiBaseUrl} onChange={(event) => updateConfig({ apiBaseUrl: event.target.value })} />
+          <input
+            disabled={loggingIn}
+            value={config.apiBaseUrl}
+            onChange={(event) => updateConfig({ apiBaseUrl: event.target.value })}
+          />
         </label>
         <label>
           Auth Base URL
           <div className="prompt-lab-inline-field">
-            <input value={config.authBaseUrl} onChange={(event) => updateConfig({ authBaseUrl: event.target.value })} />
-            <button type="button" onClick={() => updateConfig({ authBaseUrl: deriveAuthBaseUrl(config.apiBaseUrl) })}>推导</button>
+            <input
+              disabled={loggingIn}
+              value={config.authBaseUrl}
+              onChange={(event) => updateConfig({ authBaseUrl: event.target.value })}
+            />
+            <button
+              type="button"
+              disabled={loggingIn}
+              onClick={() => updateConfig({ authBaseUrl: deriveAuthBaseUrl(config.apiBaseUrl) })}
+            >
+              推导
+            </button>
           </div>
         </label>
         <label>
           Prompt Lab API Base URL
           <input
             aria-label="Prompt Lab API Base URL"
+            disabled={loggingIn}
             value={promptLabApiBaseUrlDraft}
-            onChange={(event) => setPromptLabApiBaseUrlDraft(event.target.value)}
+            onChange={(event) => {
+              invalidateAuthorizationContext(false)
+              promptLabApiBaseUrlDraftRef.current = event.target.value
+              setPromptLabApiBaseUrlDraft(event.target.value)
+            }}
           />
         </label>
         <label className="prompt-lab-token-field">
@@ -355,8 +586,14 @@ function ContentAuditPromptDebugPage() {
             aria-label="Bearer Token"
             type="password"
             autoComplete="off"
+            disabled={loggingIn}
             value={config.token}
-            onChange={(event) => updateConfig({ token: event.target.value })}
+            onChange={(event) => {
+              invalidateAuthorizationContext(true)
+              setLoginUserId(null)
+              setLoginFeedback(null)
+              updateConfig({ token: event.target.value })
+            }}
           />
         </label>
         <label className="prompt-lab-dev-toggle">
@@ -369,6 +606,52 @@ function ContentAuditPromptDebugPage() {
         </label>
       </section>
 
+      <form className="prompt-lab-login" aria-label="账号密码登录" onSubmit={loginWithPassword}>
+        <label>
+          手机号
+          <input
+            autoComplete="username"
+            disabled={loggingIn}
+            inputMode="tel"
+            value={loginPhone}
+            onChange={(event) => setLoginPhone(event.target.value)}
+            placeholder="13800138000"
+          />
+        </label>
+        <label>
+          登录密码
+          <input
+            autoComplete="current-password"
+            disabled={loggingIn}
+            type="password"
+            value={loginPassword}
+            onChange={(event) => setLoginPassword(event.target.value)}
+            placeholder="输入测试账号密码"
+          />
+        </label>
+        <button type="submit" disabled={loggingIn || !loginPhone.trim() || !loginPassword}>
+          {loggingIn ? '登录中...' : config.token.trim() ? '重新登录' : '账号密码登录'}
+        </button>
+        {(loginFeedback || loginUserId !== null) && (
+          <div className="prompt-lab-login-result">
+            {loginFeedback && (
+              <p
+                className={`prompt-lab-login-feedback is-${loginFeedback.kind}`}
+                role={loginFeedback.kind === 'error' ? 'alert' : 'status'}
+              >
+                {loginFeedback.message}
+              </p>
+            )}
+            {loginUserId !== null && (
+              <dl className="prompt-lab-login-user-id" aria-label="当前登录用户 ID">
+                <dt>User ID</dt>
+                <dd>{loginUserId}</dd>
+              </dl>
+            )}
+          </div>
+        )}
+      </form>
+
       {error && <div className="prompt-lab-error" role="alert">{error}</div>}
 
       <div className="prompt-lab-workspace">
@@ -378,7 +661,7 @@ function ContentAuditPromptDebugPage() {
               <span>最近任务</span>
               <strong>{tasks.length}</strong>
             </div>
-            <button type="button" disabled={loadingTasks || probing} onClick={() => void loadTasks()}>
+            <button type="button" disabled={loadingTasks || probing || loggingIn} onClick={() => void loadTasks()}>
               {loadingTasks ? '加载中' : '刷新'}
             </button>
           </div>
@@ -388,7 +671,7 @@ function ContentAuditPromptDebugPage() {
                 className={task.taskId === selectedTaskId ? 'is-active' : ''}
                 type="button"
                 key={task.taskId}
-                disabled={loadingPreviews || probing}
+                disabled={loadingPreviews || probing || loggingIn}
                 onClick={() => void loadPreviews(task.taskId)}
               >
                 <span>{statusLabel(task.status)}</span>
@@ -409,7 +692,7 @@ function ContentAuditPromptDebugPage() {
               </div>
               <button
                 type="button"
-                disabled={!selectedTaskId || loadingPreviews || probing}
+                disabled={!selectedTaskId || loadingPreviews || probing || loggingIn}
                 onClick={() => void loadPreviews(selectedTaskId)}
               >
                 {loadingPreviews ? '加载中' : '重载详情'}
@@ -423,7 +706,7 @@ function ContentAuditPromptDebugPage() {
                   role="tab"
                   aria-selected={preview.previewId === selectedPreviewId}
                   key={preview.previewId}
-                  disabled={probing}
+                  disabled={probing || loggingIn}
                   onClick={() => selectPreview(preview)}
                 >
                   <span>#{index + 1}</span>
@@ -506,29 +789,53 @@ function ContentAuditPromptDebugPage() {
 
           <section className="prompt-lab-prompt-section">
             <div className="prompt-lab-prompt-head">
-              <label htmlFor="content-moderation-prompt">候选完整 Prompt</label>
-              <button
-                type="button"
-                disabled={probing || promptOverride === CONTENT_MODERATION_BASELINE_PROMPT}
-                onClick={() => setPromptOverride(CONTENT_MODERATION_BASELINE_PROMPT)}
+              <label htmlFor="content-moderation-prompt">授权完整 Prompt</label>
+              <div className="prompt-lab-prompt-actions">
+                {promptVersion && <span className="prompt-lab-prompt-version">{promptVersion}</span>}
+                <button
+                  type="button"
+                  disabled={loadingPrompt || probing || loggingIn || !config.token.trim()}
+                  onClick={() => void loadAuthorizedPrompt()}
+                >
+                  {loadingPrompt ? '加载中...' : authorizedPrompt ? '重新加载授权 Prompt' : '加载授权 Prompt'}
+                </button>
+                <button
+                  type="button"
+                  disabled={probing || !authorizedPrompt || promptOverride === authorizedPrompt}
+                  onClick={() => {
+                    if (authorizedPrompt) setPromptOverride(authorizedPrompt)
+                  }}
+                >
+                  恢复基准 Prompt
+                </button>
+              </div>
+            </div>
+            {!authorizedPrompt ? (
+              <div
+                className={`prompt-lab-prompt-locked ${promptLoadError ? 'has-error' : ''}`}
+                role={promptLoadError ? 'alert' : 'status'}
               >
-                恢复基准 Prompt
-              </button>
-            </div>
-            <textarea
-              id="content-moderation-prompt"
-              aria-label="候选完整 Prompt"
-              maxLength={50000}
-              value={promptOverride}
-              disabled={probing}
-              onChange={(event) => setPromptOverride(event.target.value)}
-            />
-            <div className="prompt-lab-submit-row">
-              <span>{promptOverride.length}/50000</span>
-              <button className="prompt-lab-submit" type="submit" disabled={probing}>
-                {probing ? '审核中' : '执行审核'}
-              </button>
-            </div>
+                <strong>{loadingPrompt ? '授权 Prompt 加载中' : '授权 Prompt 未加载'}</strong>
+                {promptLoadError && <p>{promptLoadError}</p>}
+              </div>
+            ) : (
+              <>
+                <textarea
+                  id="content-moderation-prompt"
+                  aria-label="授权完整 Prompt"
+                  maxLength={50000}
+                  value={promptOverride}
+                  disabled={probing}
+                  onChange={(event) => setPromptOverride(event.target.value)}
+                />
+                <div className="prompt-lab-submit-row">
+                  <span>{promptOverride.length}/50000</span>
+                  <button className="prompt-lab-submit" type="submit" disabled={probing || !authorizedPrompt}>
+                    {probing ? '审核中' : '执行审核'}
+                  </button>
+                </div>
+              </>
+            )}
           </section>
         </form>
 

@@ -280,7 +280,7 @@ function App() {
   const [durationMax, setDurationMax] = useState('')
   const [aiProvider, setAiProvider] = useState('')
   const [loginPhone, setLoginPhone] = useState(defaultLoginPhone)
-  const [loginPassword, setLoginPassword] = useState(import.meta.env.VITE_BOOMCLIP_LOGIN_PASSWORD ?? '')
+  const [loginPassword, setLoginPassword] = useState('')
   const [loggingIn, setLoggingIn] = useState(false)
   const [previewJobs, setPreviewJobs] = useState<PreviewJob[]>([])
   const [activeJobId, setActiveJobId] = useState<string | null>(null)

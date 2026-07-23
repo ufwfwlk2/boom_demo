@@ -347,6 +347,11 @@ export type WorkbenchConfig = {
   devPreviewFields: boolean
 }
 
+export type ModerationPromptResponse = {
+  prompt: string
+  version: 'v1'
+}
+
 export type ModerationProbeRequest = {
   previewId: string
   finalSegmentIndexes: number[]
